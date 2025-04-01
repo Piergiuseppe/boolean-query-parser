@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="boolean_query_parser",
-    version="0.1.0",
+    version="1.0.1",
     author="Piergiuseppe D'Abbraccio",
     author_email="piergiuseppedabbraccio@gmail.com",
     description="A Python package for parsing and evaluating boolean text queries",
