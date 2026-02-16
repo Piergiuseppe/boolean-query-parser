@@ -1,17 +1,22 @@
 # Boolean Query Parser
 
-A Python package for parsing and evaluating complex boolean text queries with support for AND, OR, NOT operations, parentheses for nesting, and regular expression pattern matching.
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/boolean-query-parser?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pypi.org/project/boolean-query-parser/)
+
+A lightweight, **zero-dependency** Python package for parsing and evaluating complex boolean text queries. Supports `AND`, `OR`, `NOT` operators, parentheses for nesting, and regular expression pattern matching — built entirely on the Python standard library.
 
 ## Features
 
+- **Zero external dependencies** — uses only the Python standard library (`re`), so it installs instantly and adds no weight to your project
 - Boolean operators: `AND`, `OR`, `NOT`
+- Implicit AND: adjacent terms without an operator are treated as AND (e.g. `python flask` equals `python AND flask`)
 - Parentheses for grouping and complex nested expressions
+- Quoted strings for exact phrase matching (`"exact phrase"`)
 - Regular expression pattern matching with support for:
   - Regular expression flags (`i` for case-insensitive, `m` for multiline, `s` for dotall, `x` for verbose)
   - Complex patterns including capture groups, lookaheads, and lookbehinds
   - Special character escaping
 - Simple, intuitive query syntax
-- Comprehensive error handling
+- Comprehensive error handling with clear messages
 
 ## Installation
 
@@ -26,8 +31,8 @@ pip install boolean-query-parser
 Clone the repository and install using pip:
 
 ```bash
-git clone https://github.com/yourusername/boolean_query_parser.git
-cd boolean_query_parser
+git clone https://github.com/Piergiuseppe/boolean-query-parser.git
+cd boolean-query-parser
 pip install .
 ```
 
@@ -159,36 +164,38 @@ print(apply_query(password_query, "Password123"))  # True
 
 ## API Documentation
 
-### `parse_query(query_str: str) -> Union[dict, str]`
+### `parse_query(query_str: str) -> Node`
 
-Parses a boolean query string into a structured representation.
+Parses a boolean query string into an abstract syntax tree (AST).
 
 **Parameters:**
 - `query_str` (str): The boolean query string to parse.
 
 **Returns:**
-- A nested dictionary structure representing the parsed query.
+- `Node`: The root node of the parsed AST.
 
 **Raises:**
-- `SyntaxError`: If the query has invalid syntax or mismatched parentheses.
+- `QueryError`: If the query has invalid syntax or mismatched parentheses.
 
 **Query Syntax:**
 - Boolean operators: `AND`, `OR`, `NOT`
+- Implicit AND: adjacent terms without an operator are treated as AND (e.g. `python flask` equals `python AND flask`)
 - Terms can be wrapped in quotes for exact matching: `"exact phrase"`
 - Regular expressions can be specified with forward slashes: `/pattern/`
 - Regular expressions can include flags: `/pattern/i` (i=case-insensitive, m=multiline, s=dotall, x=verbose)
 - Parentheses can be used for grouping expressions
 
-### `apply_query(parsed_query: Union[dict, str], text: str) -> bool`
+### `apply_query(parsed_query: Node, text: Union[str, List[str]]) -> Union[bool, List[str]]`
 
-Applies a parsed query to a text string and returns whether the text matches the query.
+Applies a parsed query to text data and returns whether the text matches the query.
 
 **Parameters:**
-- `parsed_query` (Union[dict, str]): The parsed query structure from `parse_query`.
-- `text` (str): The text to match against the query.
+- `parsed_query` (Node): The parsed query AST from `parse_query`.
+- `text` (Union[str, List[str]]): A single string to evaluate, or a list of strings to filter.
 
 **Returns:**
-- `bool`: True if the text matches the query, False otherwise.
+- If `text` is a `str`: `bool` — True if the text matches the query, False otherwise.
+- If `text` is a `list`: `List[str]` — the subset of strings that match the query.
 
 ## Real-World Use Cases
 

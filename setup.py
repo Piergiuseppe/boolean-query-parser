@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="boolean_query_parser",
-    version="1.0.1",
+    version="1.0.2",
     author="Piergiuseppe D'Abbraccio",
     author_email="piergiuseppedabbraccio@gmail.com",
     description="A Python package for parsing and evaluating boolean text queries",
@@ -20,9 +20,7 @@ setup(
         "Topic :: Text Processing :: General",
     ],
     python_requires=">=3.9",
-    install_requires=[
-        "regex>=2021.8.3",
-    ],
+    install_requires=[],
     keywords="boolean, query, parser, text, search",
     project_urls={
         "Bug Reports": "https://github.com/Piergiuseppe/boolean-query-parser/issues",

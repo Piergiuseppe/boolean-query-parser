@@ -7,9 +7,8 @@ and regular expressions for text matching.
 """
 
 import re
-from dataclasses import dataclass
 from enum import Enum, auto
-from typing import List, Union
+from typing import Callable, List, Union
 
 
 class TokenType(Enum):
@@ -24,199 +23,264 @@ class TokenType(Enum):
     EOF = auto()
 
 
-@dataclass
 class Token:
     """Represents a token in the boolean query language."""
-    type: TokenType
-    value: str
-    position: int
+    __slots__ = ('type', 'value', 'position')
+
+    def __init__(self, type: TokenType, value: str, position: int):
+        self.type = type
+        self.value = value
+        self.position = position
+
+    def __repr__(self) -> str:
+        return f"Token({self.type}, {self.value!r}, {self.position})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Token):
+            return NotImplemented
+        return self.type == other.type and self.value == other.value and self.position == other.position
 
 
 class Lexer:
     """
     Tokenizes a boolean query string into a sequence of tokens.
-    
+
     Supports operators: AND, OR, NOT, (, ), and text/regex literals.
     """
-    
+    __slots__ = ('query', 'position', 'tokens')
+
     def __init__(self, query: str):
         """Initialize the lexer with a query string."""
         self.query = query
         self.position = 0
         self.tokens: List[Token] = []
-    
+
     def tokenize(self) -> List[Token]:
         """
         Convert the query string into a list of tokens.
-        
+
         Returns:
             List[Token]: The tokenized query
         """
-        while self.position < len(self.query):
-            current_char = self.query[self.position]
-            
-            # Skip whitespace
-            if current_char.isspace():
-                self.position += 1
+        # Cache instance attributes as locals for faster access in the loop
+        query = self.query
+        query_len = len(query)
+        tokens = self.tokens
+        position = self.position
+
+        while position < query_len:
+            current_char = query[position]
+
+            # Skip whitespace — explicit char checks are faster than .isspace()
+            if current_char == ' ' or current_char == '\t' or current_char == '\n' or current_char == '\r':
+                position += 1
                 continue
-            
+
             # Handle operators and parentheses
             if current_char == '(':
-                self.tokens.append(Token(TokenType.LPAREN, '(', self.position))
-                self.position += 1
+                tokens.append(Token(TokenType.LPAREN, '(', position))
+                position += 1
             elif current_char == ')':
-                self.tokens.append(Token(TokenType.RPAREN, ')', self.position))
-                self.position += 1
+                tokens.append(Token(TokenType.RPAREN, ')', position))
+                position += 1
             # Handle regex patterns (enclosed in forward slashes)
             elif current_char == '/':
+                self.position = position
                 regex_pattern = self._extract_regex()
+                position = self.position
                 if regex_pattern:
-                    self.tokens.append(Token(TokenType.REGEX, regex_pattern, self.position - len(regex_pattern) - 2))
+                    tokens.append(Token(TokenType.REGEX, regex_pattern, position - len(regex_pattern) - 2))
             # Handle text or keywords
-            elif current_char.isalnum() or current_char == '_' or current_char == '"' or current_char == "'":
+            elif current_char.isalnum() or current_char in ('_', '"', "'"):
+                self.position = position
                 text = self._extract_text()
+                position = self.position
                 upper_text = text.upper()
-                
+
                 if upper_text == 'AND':
-                    self.tokens.append(Token(TokenType.AND, 'AND', self.position - 3))
+                    tokens.append(Token(TokenType.AND, 'AND', position - 3))
                 elif upper_text == 'OR':
-                    self.tokens.append(Token(TokenType.OR, 'OR', self.position - 2))
+                    tokens.append(Token(TokenType.OR, 'OR', position - 2))
                 elif upper_text == 'NOT':
-                    self.tokens.append(Token(TokenType.NOT, 'NOT', self.position - 3))
+                    tokens.append(Token(TokenType.NOT, 'NOT', position - 3))
                 else:
-                    self.tokens.append(Token(TokenType.TEXT, text, self.position - len(text)))
+                    tokens.append(Token(TokenType.TEXT, text, position - len(text)))
             else:
-                # Skip unrecognized characters
-                self.position += 1
-        
+                raise ValueError(
+                    f"Unrecognized character '{current_char}' at position {position}. "
+                    f"Use quotes for terms containing special characters, e.g. \"{current_char}term\""
+                )
+
         # Add EOF token
-        self.tokens.append(Token(TokenType.EOF, '', self.position))
-        return self.tokens
-    
+        tokens.append(Token(TokenType.EOF, '', position))
+        self.position = position
+        return tokens
+
     def _extract_regex(self) -> str:
         """
         Extract a regex pattern enclosed in forward slashes, including any flags.
-        
+
         Returns:
             str: The extracted regex pattern and flags
         """
+        query = self.query
+        query_len = len(query)
         start_pos = self.position
-        self.position += 1  # Skip opening slash
-        
+        pos = start_pos + 1  # Skip opening slash
+
         # If we're at the end of the string already, return empty
-        if self.position >= len(self.query):
+        if pos >= query_len:
             return ""
-        
-        # Find closing slash
-        content = ""
-        while self.position < len(self.query) and self.query[self.position] != '/':
+
+        # Find closing slash — build content with list for O(n) concatenation
+        parts: list = []
+        parts_append = parts.append
+        while pos < query_len and query[pos] != '/':
             # Handle escaped characters
-            if self.query[self.position] == '\\' and self.position + 1 < len(self.query):
-                content += self.query[self.position:self.position+2]
-                self.position += 2
+            if query[pos] == '\\' and pos + 1 < query_len:
+                parts_append(query[pos:pos + 2])
+                pos += 2
             else:
-                content += self.query[self.position]
-                self.position += 1
-        
+                parts_append(query[pos])
+                pos += 1
+
         # Skip closing slash if found
-        if self.position < len(self.query) and self.query[self.position] == '/':
-            self.position += 1
-            
+        if pos < query_len and query[pos] == '/':
+            pos += 1
+
             # Extract any regex flags (i, g, m, etc.)
-            flags = ""
-            while self.position < len(self.query) and self.query[self.position].isalpha():
-                flags += self.query[self.position]
-                self.position += 1
-            
-            if flags:
-                return f"{content}/{flags}"
+            flags_parts: list = []
+            while pos < query_len and query[pos].isalpha():
+                flags_parts.append(query[pos])
+                pos += 1
+
+            self.position = pos
+            content = ''.join(parts)
+
+            if flags_parts:
+                return f"{content}/{''.join(flags_parts)}"
             return content
         else:
             # Unclosed regex, revert position
             self.position = start_pos
             return ""
-    
+
     def _extract_text(self) -> str:
         """
         Extract a text token, which could be a quoted string or a regular word.
-        
+
         Returns:
             str: The extracted text
         """
-        start_pos = self.position
-        
-        # Check if it's a quoted string
-        if self.query[start_pos] in ['"', "'"]:
-            quote_char = self.query[start_pos]
-            self.position += 1  # Skip opening quote
-            
-            content = ""
-            while self.position < len(self.query) and self.query[self.position] != quote_char:
+        query = self.query
+        query_len = len(query)
+        pos = self.position
+
+        # Check if it's a quoted string — tuple is faster than list for 'in'
+        if query[pos] in ('"', "'"):
+            quote_char = query[pos]
+            pos += 1  # Skip opening quote
+
+            parts: list = []
+            parts_append = parts.append
+            while pos < query_len and query[pos] != quote_char:
                 # Handle escaped characters in quotes
-                if self.query[self.position] == '\\' and self.position + 1 < len(self.query):
-                    content += self.query[self.position+1]
-                    self.position += 2
+                if query[pos] == '\\' and pos + 1 < query_len:
+                    parts_append(query[pos + 1])
+                    pos += 2
                 else:
-                    content += self.query[self.position]
-                    self.position += 1
-            
+                    parts_append(query[pos])
+                    pos += 1
+
             # Skip closing quote if found
-            if self.position < len(self.query):
-                self.position += 1
-            
-            return content
-        
-        # Regular word
-        word = ""
-        while (self.position < len(self.query) and 
-               (self.query[self.position].isalnum() or self.query[self.position] == '_')):
-            word += self.query[self.position]
-            self.position += 1
-        
-        return word
+            if pos < query_len:
+                pos += 1
+
+            self.position = pos
+            return ''.join(parts)
+
+        # Regular word — slice at the end instead of char-by-char concatenation
+        start = pos
+        while pos < query_len:
+            c = query[pos]
+            if c.isalnum() or c == '_':
+                pos += 1
+            else:
+                break
+
+        self.position = pos
+        return query[start:pos]
 
 
 class Node:
     """Base class for AST nodes in the boolean query parser."""
+    __slots__ = ()
+
     def evaluate(self, text: str) -> bool:
         """
         Evaluate this node against the provided text.
-        
+
         Args:
             text: The text to evaluate against
-            
+
         Returns:
             bool: True if the node's condition matches the text, False otherwise
         """
         raise NotImplementedError("Subclasses must implement evaluate()")
 
+    def _compile(self) -> Callable[[str], bool]:
+        """
+        Compile this node into a fast closure for repeated evaluation.
+
+        Returns a plain function that avoids method dispatch and attribute
+        lookups, giving a significant speedup when evaluating many texts.
+        """
+        raise NotImplementedError("Subclasses must implement _compile()")
+
 
 class TextNode(Node):
     """Node representing a text literal in the query."""
+    __slots__ = ('value',)
+
     def __init__(self, value: str):
         self.value = value
-    
+
     def evaluate(self, text: str) -> bool:
         """Return True if the node's text value is found in the input text."""
         return self.value in text
-    
+
+    def _compile(self) -> Callable[[str], bool]:
+        value = self.value  # capture as closure local (LOAD_DEREF vs LOAD_ATTR)
+        def _eval(text: str) -> bool:
+            return value in text
+        return _eval
+
     def __repr__(self) -> str:
         return f"Text({self.value!r})"
 
 
 class RegexNode(Node):
     """Node representing a regular expression pattern in the query."""
+    __slots__ = ('pattern', 'regex')
+
+    VALID_FLAGS = frozenset('imsx')
+
     def __init__(self, pattern: str):
         self.pattern = pattern
-        
-        # Handle regex flags
+
+        # Handle regex flags.
+        # The Lexer stores the token value as "pattern/flags" when flags are present,
+        # or just "pattern" when there are none. We use rfind to only split on the
+        # *last* '/' so that forward slashes inside the pattern (e.g. escaped \/) are
+        # preserved correctly.
         flags = 0
-        if '/' in pattern and not pattern.endswith('\\/'): 
-            parts = pattern.split('/')
-            if len(parts) > 1 and parts[-1]:  # If there are flags after the last slash
-                flag_str = parts[-1]
-                pattern = '/'.join(parts[:-1])  # Remove flags from pattern
-                
+        last_slash = pattern.rfind('/')
+        if last_slash > 0:
+            possible_flags = pattern[last_slash + 1:]
+            if possible_flags and all(c in self.VALID_FLAGS for c in possible_flags):
+                flag_str = possible_flags
+                pattern = pattern[:last_slash]
+
                 if 'i' in flag_str:
                     flags |= re.IGNORECASE
                 if 'm' in flag_str:
@@ -225,59 +289,89 @@ class RegexNode(Node):
                     flags |= re.DOTALL
                 if 'x' in flag_str:
                     flags |= re.VERBOSE
-        
+
         try:
             self.regex = re.compile(pattern, flags)
         except re.error as e:
             raise ValueError(f"Invalid regular expression: {pattern}. Error: {e}")
-    
+
     def evaluate(self, text: str) -> bool:
         """Return True if the regex pattern matches the input text."""
-        return bool(self.regex.search(text))
-    
+        return self.regex.search(text) is not None
+
+    def _compile(self) -> Callable[[str], bool]:
+        search = self.regex.search  # bind method once (avoids attr lookup per call)
+        def _eval(text: str) -> bool:
+            return search(text) is not None
+        return _eval
+
     def __repr__(self) -> str:
         return f"Regex({self.pattern!r})"
 
 
 class NotNode(Node):
     """Node representing a NOT operation in the query."""
+    __slots__ = ('child',)
+
     def __init__(self, child: Node):
         self.child = child
-    
+
     def evaluate(self, text: str) -> bool:
         """Return the negation of the child node's evaluation."""
         return not self.child.evaluate(text)
-    
+
+    def _compile(self) -> Callable[[str], bool]:
+        child_eval = self.child._compile()
+        def _eval(text: str) -> bool:
+            return not child_eval(text)
+        return _eval
+
     def __repr__(self) -> str:
         return f"NOT({self.child!r})"
 
 
 class AndNode(Node):
     """Node representing an AND operation in the query."""
+    __slots__ = ('left', 'right')
+
     def __init__(self, left: Node, right: Node):
         self.left = left
         self.right = right
-    
+
     def evaluate(self, text: str) -> bool:
         """Return True if both child nodes evaluate to True."""
-        # Short-circuit evaluation
         return self.left.evaluate(text) and self.right.evaluate(text)
-    
+
+    def _compile(self) -> Callable[[str], bool]:
+        left_eval = self.left._compile()
+        right_eval = self.right._compile()
+        def _eval(text: str) -> bool:
+            return left_eval(text) and right_eval(text)
+        return _eval
+
     def __repr__(self) -> str:
         return f"({self.left!r} AND {self.right!r})"
 
 
 class OrNode(Node):
     """Node representing an OR operation in the query."""
+    __slots__ = ('left', 'right')
+
     def __init__(self, left: Node, right: Node):
         self.left = left
         self.right = right
-    
+
     def evaluate(self, text: str) -> bool:
         """Return True if either child node evaluates to True."""
-        # Short-circuit evaluation
         return self.left.evaluate(text) or self.right.evaluate(text)
-    
+
+    def _compile(self) -> Callable[[str], bool]:
+        left_eval = self.left._compile()
+        right_eval = self.right._compile()
+        def _eval(text: str) -> bool:
+            return left_eval(text) or right_eval(text)
+        return _eval
+
     def __repr__(self) -> str:
         return f"({self.left!r} OR {self.right!r})"
 
@@ -285,101 +379,128 @@ class OrNode(Node):
 class Parser:
     """
     Parses a tokenized boolean query into an abstract syntax tree (AST).
-    
+
     Implements a recursive descent parser with the following grammar:
-    query   := or_expr
-    or_expr := and_expr ('OR' and_expr)*
-    and_expr := not_expr ('AND' not_expr)*
+    query    := or_expr
+    or_expr  := and_expr ('OR' and_expr)*
+    and_expr := not_expr ('AND'? not_expr)*   (implicit AND supported)
     not_expr := 'NOT' not_expr | atom
-    atom    := TEXT | REGEX | '(' query ')'
+    atom     := TEXT | REGEX | '(' query ')'
     """
-    
+    __slots__ = ('tokens', 'current', '_num_tokens')
+
+    # Token types that can start an implicit AND operand
+    _IMPLICIT_AND_STARTERS = frozenset({
+        TokenType.TEXT, TokenType.REGEX, TokenType.LPAREN, TokenType.NOT
+    })
+
     def __init__(self, tokens: List[Token]):
         """Initialize the parser with a list of tokens."""
         self.tokens = tokens
         self.current = 0
-    
+        self._num_tokens = len(tokens)
+
     def parse(self) -> Node:
         """
         Parse the tokens into an AST.
-        
+
         Returns:
             Node: The root node of the AST
-        
+
         Raises:
             ValueError: If the query has syntax errors
         """
-        if not self.tokens or self.tokens[-1].type != TokenType.EOF:
+        tokens = self.tokens
+        if not tokens or tokens[-1].type != TokenType.EOF:
             raise ValueError("Invalid token stream, missing EOF")
-        
-        if len(self.tokens) == 1:  # Only EOF
+
+        if self._num_tokens == 1:  # Only EOF
             raise ValueError("Empty query")
-        
+
         result = self._parse_or_expr()
-        
+
         # Check that we've consumed all tokens except EOF
-        if self.current < len(self.tokens) - 1:
-            unexpected_token = self.tokens[self.current]
+        if self.current < self._num_tokens - 1:
+            unexpected_token = tokens[self.current]
             raise ValueError(f"Unexpected token at position {unexpected_token.position}: {unexpected_token.value}")
-        
+
         return result
-    
+
     def _parse_or_expr(self) -> Node:
         """Parse an OR expression (a series of AND expressions joined by OR)."""
         left = self._parse_and_expr()
-        
-        while self.current < len(self.tokens) and self.tokens[self.current].type == TokenType.OR:
+        tokens = self.tokens
+
+        while self.current < self._num_tokens and tokens[self.current].type == TokenType.OR:
             self.current += 1  # Consume OR
             right = self._parse_and_expr()
             left = OrNode(left, right)
-        
+
         return left
-    
+
     def _parse_and_expr(self) -> Node:
-        """Parse an AND expression (a series of NOT expressions joined by AND)."""
+        """
+        Parse an AND expression (a series of NOT expressions joined by AND).
+
+        Supports both explicit AND and implicit AND (adjacent terms without an
+        operator are treated as AND, e.g. ``python java`` is ``python AND java``).
+        """
         left = self._parse_not_expr()
-        
-        while self.current < len(self.tokens) and self.tokens[self.current].type == TokenType.AND:
-            self.current += 1  # Consume AND
-            right = self._parse_not_expr()
-            left = AndNode(left, right)
-        
+        tokens = self.tokens
+        num_tokens = self._num_tokens
+        implicit_starters = self._IMPLICIT_AND_STARTERS
+
+        while self.current < num_tokens:
+            ttype = tokens[self.current].type
+
+            if ttype == TokenType.AND:
+                self.current += 1  # Consume explicit AND
+                right = self._parse_not_expr()
+                left = AndNode(left, right)
+            elif ttype in implicit_starters:
+                # Implicit AND: next token starts a new expression without an operator
+                right = self._parse_not_expr()
+                left = AndNode(left, right)
+            else:
+                break
+
         return left
-    
+
     def _parse_not_expr(self) -> Node:
         """Parse a NOT expression."""
-        if self.current < len(self.tokens) and self.tokens[self.current].type == TokenType.NOT:
+        if self.current < self._num_tokens and self.tokens[self.current].type == TokenType.NOT:
             self.current += 1  # Consume NOT
             expr = self._parse_not_expr()  # NOT is right-associative
             return NotNode(expr)
-        
+
         return self._parse_atom()
-    
+
     def _parse_atom(self) -> Node:
         """Parse an atomic expression (text, regex, or parenthesized expression)."""
-        if self.current >= len(self.tokens):
+        if self.current >= self._num_tokens:
             raise ValueError("Unexpected end of query")
-        
+
         token = self.tokens[self.current]
-        
-        if token.type == TokenType.TEXT:
+        ttype = token.type
+
+        if ttype == TokenType.TEXT:
             self.current += 1  # Consume TEXT
             return TextNode(token.value)
-        
-        elif token.type == TokenType.REGEX:
+
+        elif ttype == TokenType.REGEX:
             self.current += 1  # Consume REGEX
             return RegexNode(token.value)
-        
-        elif token.type == TokenType.LPAREN:
+
+        elif ttype == TokenType.LPAREN:
             self.current += 1  # Consume '('
             expr = self._parse_or_expr()
-            
-            if self.current >= len(self.tokens) or self.tokens[self.current].type != TokenType.RPAREN:
+
+            if self.current >= self._num_tokens or self.tokens[self.current].type != TokenType.RPAREN:
                 raise ValueError(f"Missing closing parenthesis for opening parenthesis at position {token.position}")
-            
+
             self.current += 1  # Consume ')'
             return expr
-        
+
         else:
             raise ValueError(f"Unexpected token at position {token.position}: {token.value}")
 
@@ -392,31 +513,31 @@ class QueryError(Exception):
 def parse_query(query_str: str) -> Node:
     """
     Parse a boolean query string into an AST.
-    
+
     This function handles the lexing and parsing stages, converting a string like
     "search AND (terms OR /regex/) NOT excluded" into an executable AST.
-    
+
     Args:
         query_str: The boolean query string to parse
-    
+
     Returns:
         Node: The root node of the parsed AST
-    
+
     Raises:
         QueryError: If the query has syntax errors
-    
+
     Examples:
         >>> ast = parse_query('python AND (django OR flask)')
-        >>> ast = parse_query('error NOT "permission denied"')
-        >>> ast = parse_query('/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/') # email regex
+        >>> ast = parse_query('error NOT "permission denied"')  # implicit AND
+        >>> ast = parse_query('/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i')  # email regex
     """
     try:
         lexer = Lexer(query_str)
         tokens = lexer.tokenize()
-        
+
         parser = Parser(tokens)
         return parser.parse()
-    
+
     except ValueError as e:
         raise QueryError(f"Error parsing query: {e}")
 
@@ -424,15 +545,15 @@ def parse_query(query_str: str) -> Node:
 def apply_query(parsed_query: Node, text_data: Union[str, List[str]]) -> Union[bool, List[str]]:
     """
     Apply a parsed boolean query to text data.
-    
+
     Args:
         parsed_query: The parsed query AST (from parse_query)
         text_data: Either a single string to evaluate or a list of strings to filter
-    
+
     Returns:
         If text_data is a string: bool indicating if the query matches
         If text_data is a list: List of strings that match the query
-    
+
     Examples:
         >>> query = parse_query('python AND (django OR flask)')
         >>> apply_query(query, "This is a python flask application")
@@ -445,9 +566,16 @@ def apply_query(parsed_query: Node, text_data: Union[str, List[str]]) -> Union[b
             return parsed_query.evaluate(text_data)
         except Exception as e:
             raise QueryError(f"Error evaluating query: {e}")
-    
+
     elif isinstance(text_data, list):
         try:
-            return [text for text in text_data if parsed_query.evaluate(text)]
+            # Compile the AST into a closure and use C-level filter() for
+            # maximum throughput when filtering large document collections.
+            return list(filter(parsed_query._compile(), text_data))
         except Exception as e:
             raise QueryError(f"Error evaluating query: {e}")
+
+    else:
+        raise TypeError(
+            f"text_data must be a str or list of str, got {type(text_data).__name__}"
+        )
