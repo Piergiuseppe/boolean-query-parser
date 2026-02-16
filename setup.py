@@ -9,7 +9,7 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/Piergiuseppe/boolean-query-parser",
-    packages=find_packages(),
+    packages=find_packages(exclude=["tests", "tests.*", "docs"]),
     classifiers=[
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.13",

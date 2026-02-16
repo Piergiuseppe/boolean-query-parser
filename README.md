@@ -2,6 +2,8 @@
 
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/boolean-query-parser?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pypi.org/project/boolean-query-parser/)
 
+**[▶ Try it live in your browser](https://piergiuseppe.github.io/boolean-query-parser/)** — no install needed, runs via WebAssembly
+
 A lightweight, **zero-dependency** Python package for parsing and evaluating complex boolean text queries. Supports `AND`, `OR`, `NOT` operators, parentheses for nesting, and regular expression pattern matching — built entirely on the Python standard library.
 
 ## Features
