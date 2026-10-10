@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "boolean_query_parser"
 version = "1.1.0"
-description = "Parse and evaluate boolean text queries with regex, number and date comparisons"
+description = "Boolean queries over text and records: wildcards, regex, number/date/duration/size comparisons, explanations, and a grep-like CLI"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -34,6 +34,9 @@ classifiers = [
 Homepage = "https://piergiuseppe.github.io/boolean-query-parser/"
 Repository = "https://github.com/Piergiuseppe/boolean-query-parser"
 Issues = "https://github.com/Piergiuseppe/boolean-query-parser/issues"
+
+[project.scripts]
+bqp = "boolean_query_parser.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["boolean_query_parser"]
