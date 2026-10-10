@@ -1,12 +1,23 @@
 """
-Boolean Query Parser
-
-A package for parsing and evaluating boolean text queries with support for
-AND, OR, NOT operations, parentheses for nested expressions, and regular expressions.
+Parse and evaluate boolean text queries: AND, OR, NOT, parentheses, regular
+expressions, number and date comparisons, and positional templates.
 """
 
-from boolean_query_parser.parser import QueryError, apply_query, parse_query
+from .api import apply_query, parse_query
+from .exceptions import QueryError, QuerySyntaxError
+from .nodes import Node
 
-__version__ = "1.0.3"
-__all__ = ['parse_query', 'apply_query', 'QueryError']
+UNINSTALLED_VERSION = "0.0.0+unknown"
 
+
+def _installed_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("boolean_query_parser")
+    except PackageNotFoundError:
+        return UNINSTALLED_VERSION
+
+
+__version__ = _installed_version()
+__all__ = ["Node", "QueryError", "QuerySyntaxError", "apply_query", "parse_query"]

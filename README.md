@@ -4,7 +4,7 @@
 
 **[▶ Try it live in your browser](https://piergiuseppe.github.io/boolean-query-parser/)** — no install needed, runs via WebAssembly
 
-A lightweight, **zero-dependency** Python package for parsing and evaluating complex boolean text queries. Supports `AND`, `OR`, `NOT` operators, parentheses for nesting, and regular expression pattern matching — built entirely on the Python standard library.
+A lightweight, **zero-dependency** Python package for parsing and evaluating complex boolean text queries. Supports `AND`, `OR`, `NOT` operators, parentheses for nesting, regular expression pattern matching, and comparison operators (`>`, `<`, `>=`, `<=`, `=`) for numbers and dates found in the text — built entirely on the Python standard library.
 
 ## Features
 
@@ -13,12 +13,23 @@ A lightweight, **zero-dependency** Python package for parsing and evaluating com
 - Implicit AND: adjacent terms without an operator are treated as AND (e.g. `python flask` equals `python AND flask`)
 - Parentheses for grouping and complex nested expressions
 - Quoted strings for exact phrase matching (`"exact phrase"`)
+- Bare words may contain `_ . - + # @` after the first character, so `node.js`, `e-mail`, `C++` and `C#` need no quotes
+- Optional case-insensitive matching for the whole query: `parse_query(query, ignore_case=True)`
 - Regular expression pattern matching with support for:
   - Regular expression flags (`i` for case-insensitive, `m` for multiline, `s` for dotall, `x` for verbose)
   - Complex patterns including capture groups, lookaheads, and lookbehinds
   - Special character escaping
-- Simple, intuitive query syntax
-- Comprehensive error handling with clear messages
+- Comparison operators for numbers and dates found in natural text:
+  - `num:>5` — finds any number in the text and checks if it's > 5
+  - `date:>2023-01-01` — finds any date (YYYY-MM-DD, YYYY/MM/DD, optionally with a time) in the text and checks if it's after 2023-01-01
+  - Supported operators: `>`, `<`, `>=`, `<=`, `=`
+  - Combine with boolean operators for range queries (e.g. `num:>=5 AND num:<=10`)
+- Positional templates with `{num:op}` / `{date:op}` placeholders inside quoted strings:
+  - `"evaluated in {num:<50} ms"` — matches text like `"evaluated in 12 ms"` while respecting order
+  - Comparisons only apply to the number/date at the placeholder position, not elsewhere in the text
+  - Supports multiple placeholders in a single template
+- Filters any iterable of strings (list, tuple, generator, ...)
+- Clear syntax errors that carry the position of the offending term
 
 ## Installation
 
@@ -141,6 +152,92 @@ parsed_query = parse_query(query)
 print(apply_query(parsed_query, text_with_newlines))  # True
 ```
 
+### Using Comparisons
+
+Comparison operators scan your text for numbers or dates and compare them against a threshold. The text stays natural — no special markup needed.
+
+- `num:` scans for any number (integer or float) in the text. A minus right after a word character is read as a hyphen, so `pages 3-7` contains 3 and 7, not -7. Numbers that are part of a date or time are skipped, and so are digits after a dot (`v1.2.3` contains 1.2 only).
+- `date:` scans for any date (`YYYY-MM-DD` or `YYYY/MM/DD`), optionally followed by a time (`THH:MM[:SS]` or ` HH:MM[:SS]`).
+- Dates compare at the precision of the threshold: `date:=2024-01-01` matches `2024-01-01T10:30:00`, `date:=2024-01-01T10:30` matches any second of that minute, and `date:>2024-01-01T10:30:00` compares down to the second.
+
+```python
+from boolean_query_parser import parse_query, apply_query
+
+# Find texts where any number is greater than 3
+query = parse_query("num:>3")
+print(apply_query(query, "found 5 errors"))    # True  (5 > 3)
+print(apply_query(query, "found 2 errors"))    # False (2 is not > 3)
+
+# Float threshold
+query = parse_query("num:<=9.99")
+print(apply_query(query, "price is 5.00"))     # True
+print(apply_query(query, "price is 15.50"))    # False
+
+# Date comparison on natural text
+query = parse_query("date:>2023-01-01")
+print(apply_query(query, "deployed on 2023-06-15"))  # True
+print(apply_query(query, "deployed on 2022-12-31"))  # False
+
+# Date range
+query = parse_query("date:>=2023-01-01 AND date:<=2023-12-31")
+print(apply_query(query, "published 2023-06-15"))    # True
+print(apply_query(query, "published 2024-01-01"))    # False
+
+# Combine comparisons with text matching and regex
+query = parse_query('(/error/i OR /warn/i) AND num:>=3')
+logs = [
+    "ERROR severity 5 occurred",
+    "WARN level 3 detected",
+    "ERROR minor level 1",
+    "INFO level 5 ok",
+]
+print(apply_query(query, logs))
+# ['ERROR severity 5 occurred', 'WARN level 3 detected']
+```
+
+### Using Positional Templates
+
+When you need comparisons to apply **only to a specific position** in the text rather than scanning everywhere, wrap the query in quotes and use `{num:op value}` or `{date:op value}` placeholders:
+
+```python
+from boolean_query_parser import parse_query, apply_query
+
+# Without template: num:<50 matches ANY number, including the "1" in "test 1"
+# With template: only the number between "in" and "ms" is checked
+query = parse_query('"test 1 Success evaluated in {num:<50} ms"')
+print(apply_query(query, "test 1 Success evaluated in 12 ms"))  # True  (12 < 50)
+print(apply_query(query, "test 1 Success evaluated in 80 ms"))  # False (80 >= 50)
+print(apply_query(query, "test 2 Success evaluated in 12 ms"))  # False ("test 1" ≠ "test 2")
+
+# Multiple placeholders: each is checked at its position
+query = parse_query('"test {num:>0} completed in {num:<100} ms"')
+print(apply_query(query, "test 5 completed in 42 ms"))   # True  (5>0, 42<100)
+print(apply_query(query, "test 0 completed in 42 ms"))   # False (0 is not > 0)
+print(apply_query(query, "test 5 completed in 150 ms"))  # False (150 >= 100)
+
+# Date placeholder
+query = parse_query('"deployed on {date:>2023-01-01} successfully"')
+print(apply_query(query, "deployed on 2024-03-15 successfully"))  # True
+print(apply_query(query, "deployed on 2022-12-01 successfully"))  # False
+
+# Combine templates with boolean operators
+query = parse_query('"took {num:<50} ms" AND Success')
+print(apply_query(query, "Success took 12 ms"))  # True
+print(apply_query(query, "Failure took 12 ms"))  # False
+```
+
+### Case-insensitive Queries
+
+```python
+from boolean_query_parser import parse_query, apply_query
+
+query = parse_query('Python AND "took {num:<50} MS" NOT /timeout/', ignore_case=True)
+print(apply_query(query, "python job took 12 ms"))          # True
+print(apply_query(query, "PYTHON job took 12 ms TIMEOUT"))  # False
+```
+
+`ignore_case=True` applies to text terms, quoted phrases, templates and regexes alike.
+
 ### Complex Regex Patterns
 
 ```python
@@ -166,38 +263,48 @@ print(apply_query(password_query, "Password123"))  # True
 
 ## API Documentation
 
-### `parse_query(query_str: str) -> Node`
+### `parse_query(query_str: str, *, ignore_case: bool = False) -> Node`
 
 Parses a boolean query string into an abstract syntax tree (AST).
 
 **Parameters:**
 - `query_str` (str): The boolean query string to parse.
+- `ignore_case` (bool): Match every term regardless of case. Defaults to `False`.
 
 **Returns:**
-- `Node`: The root node of the parsed AST.
+- `Node`: The root node of the parsed AST. Parse once and reuse it: the tree compiles itself on first use.
 
 **Raises:**
-- `QueryError`: If the query has invalid syntax or mismatched parentheses.
+- `QuerySyntaxError` (a subclass of both `QueryError` and `ValueError`): if the query is malformed. Its `position` attribute holds the offset of the offending term.
+- `TypeError`: if `query_str` is not a string.
 
 **Query Syntax:**
 - Boolean operators: `AND`, `OR`, `NOT`
 - Implicit AND: adjacent terms without an operator are treated as AND (e.g. `python flask` equals `python AND flask`)
 - Terms can be wrapped in quotes for exact matching: `"exact phrase"`
 - Regular expressions can be specified with forward slashes: `/pattern/`
-- Regular expressions can include flags: `/pattern/i` (i=case-insensitive, m=multiline, s=dotall, x=verbose)
-- Parentheses can be used for grouping expressions
+- Regular expressions can include flags: `/pattern/i` (i=case-insensitive, m=multiline, s=dotall, x=verbose). Any other flag, such as JavaScript's `g`, is a syntax error.
+- Comparisons: `num:>value` and `date:>value` (operators: `>`, `<`, `>=`, `<=`, `=`)
+  - `num:` scans text for numbers (integers, floats, negatives) and compares each against the threshold
+  - `date:` scans text for date patterns (`YYYY-MM-DD`, `YYYY/MM/DD`, with an optional `THH:MM[:SS]` or ` HH:MM[:SS]` time) and compares at the precision of the threshold
+  - Values can be quoted: `date:>"2023-01-01 10:00"`
+- Positional templates: `"literal text {num:<50} more text"` — quoted strings with `{num:op value}` or `{date:op value}` placeholders. Literal text must match in order, and comparisons apply only at the placeholder position.
+- Parentheses can be used for grouping expressions, up to 100 levels deep
 
-### `apply_query(parsed_query: Node, text: Union[str, List[str]]) -> Union[bool, List[str]]`
+### `apply_query(parsed_query: Node, text_data: Union[str, Iterable[str]]) -> Union[bool, List[str]]`
 
-Applies a parsed query to text data and returns whether the text matches the query.
+Applies a parsed query to one text, or filters many.
 
 **Parameters:**
 - `parsed_query` (Node): The parsed query AST from `parse_query`.
-- `text` (Union[str, List[str]]): A single string to evaluate, or a list of strings to filter.
+- `text_data`: A single string to evaluate, or any iterable of strings (list, tuple, generator, ...) to filter.
 
 **Returns:**
-- If `text` is a `str`: `bool` — True if the text matches the query, False otherwise.
-- If `text` is a `list`: `List[str]` — the subset of strings that match the query.
+- If `text_data` is a `str`: `bool` — True if the text matches the query, False otherwise.
+- Otherwise: `List[str]` — the strings that match, in their original order.
+
+**Raises:**
+- `TypeError`: if `text_data` is neither a string nor an iterable of strings (mappings and bytes are rejected).
 
 ## Real-World Use Cases
 
@@ -247,6 +354,39 @@ def classify_document(text):
     return results or ['uncategorized']
 ```
 
+### Monitoring & Alerting
+
+Filter log entries using comparisons on numbers and dates:
+
+```python
+from boolean_query_parser import parse_query, apply_query
+
+# Alert on errors with severity >= 3 from March 2025 onwards
+query = parse_query(
+    '(/error/i OR /fatal/i) AND num:>=3 AND date:>=2025-03-01'
+)
+
+log_entries = [
+    "2025-03-15 ERROR severity 5 — Database connection timeout",
+    "2025-03-14 FATAL severity 4 — Out of memory",
+    "2025-03-15 ERROR severity 2 — Minor validation failure",
+    "2025-03-15 INFO severity 1 — Server started",
+    "2025-02-28 ERROR severity 3 — Old disk space warning",
+]
+
+alerts = apply_query(query, log_entries)
+print(f"Found {len(alerts)} alerts requiring attention")
+for alert in alerts:
+    print(f"  🚨 {alert}")
+```
+
+Output:
+```
+Found 2 alerts requiring attention
+  🚨 2025-03-15 ERROR severity 5 — Database connection timeout
+  🚨 2025-03-14 FATAL severity 4 — Out of memory
+```
+
 ### Email Filtering example
 
 Filter emails based on complex patterns:
@@ -263,6 +403,28 @@ query = parse_query('(/\\.pdf/i OR /\\.doc/i OR /\\.docx/i) AND NOT /from:.*@(co
 # Apply to email bodies
 def filter_suspicious_emails(emails):
     return [email for email in emails if apply_query(query, email)]
+```
+
+## Project Layout
+
+```
+boolean_query_parser/
+├── api.py          parse_query / apply_query, thin wrappers over the services
+├── services/       ParsingService (text → tree) and MatchingService (tree × texts → result)
+├── syntax/         tokens, Lexer and the recursive descent Parser
+├── nodes/          the tree: Text, Regex, Comparison, Template, And/Or/Not
+├── values/         value kinds (num, date), their scanners and comparison operators
+├── exceptions.py   QueryError, QuerySyntaxError
+└── parser.py       the 1.0 import path, kept for compatibility
+```
+
+Adding a new comparable kind (say, durations) means adding a `ValueKind` in `values/kinds.py`: comparisons and templates pick it up from the registry.
+
+## Development
+
+```bash
+python -m unittest discover -s tests -t .
+python scripts/sync_docs.py   # after changing the package: refreshes the copy the playground in docs/ runs
 ```
 
 ## License
