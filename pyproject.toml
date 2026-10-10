@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "boolean_query_parser"
+version = "1.1.0"
+description = "Parse and evaluate boolean text queries with regex, number and date comparisons"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Piergiuseppe D'Abbraccio", email = "piergiuseppedabbraccio@gmail.com" },
+]
+keywords = ["boolean", "query", "parser", "text", "search", "filter", "regex"]
+dependencies = []
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Text Processing :: General",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://piergiuseppe.github.io/boolean-query-parser/"
+Repository = "https://github.com/Piergiuseppe/boolean-query-parser"
+Issues = "https://github.com/Piergiuseppe/boolean-query-parser/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["boolean_query_parser"]
+
+[tool.hatch.build.targets.sdist]
+include = ["boolean_query_parser", "tests", "README.md", "LICENSE"]
