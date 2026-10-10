@@ -1,0 +1,28 @@
+{
+  "package": "boolean_query_parser",
+  "files": [
+    "__init__.py",
+    "api.py",
+    "exceptions.py",
+    "nodes/__init__.py",
+    "nodes/base.py",
+    "nodes/boolean.py",
+    "nodes/comparison.py",
+    "nodes/regex.py",
+    "nodes/template.py",
+    "nodes/text.py",
+    "parser.py",
+    "services/__init__.py",
+    "services/matching.py",
+    "services/parsing.py",
+    "syntax/__init__.py",
+    "syntax/lexer.py",
+    "syntax/parser.py",
+    "syntax/tokens.py",
+    "values/__init__.py",
+    "values/dates.py",
+    "values/kinds.py",
+    "values/numbers.py",
+    "values/operators.py"
+  ]
+}

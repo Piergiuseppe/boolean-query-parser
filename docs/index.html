@@ -149,6 +149,16 @@
             margin-top: 0.25rem;
         }
 
+        .option {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            margin-top: 0.5rem;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            cursor: pointer;
+        }
+
         /* ─── Mode toggle ─── */
         .mode-toggle {
             display: flex;
@@ -454,7 +464,8 @@
         <div class="input-group">
             <label for="query-input">Boolean expression</label>
             <input type="text" id="query-input" placeholder='e.g. python AND (django OR flask) NOT ruby' autocomplete="off" spellcheck="false">
-            <div class="input-hint">Supports: <code>AND</code>, <code>OR</code>, <code>NOT</code>, parentheses, regex <code>/pattern/flags</code>, implicit AND</div>
+            <div class="input-hint">Supports: <code>AND</code>, <code>OR</code>, <code>NOT</code>, parentheses, regex <code>/pattern/flags</code>, implicit AND, comparisons <code>num:&gt;5</code> <code>date:&gt;2023-01-01</code>, templates <code>"text {num:&lt;50} ms"</code></div>
+            <label class="option"><input type="checkbox" id="ignore-case"> Ignore case</label>
         </div>
 
         <div class="mode-toggle">
@@ -507,6 +518,14 @@
             <tr><td>/\d+\.\d+/</td><td>Regular expression matching</td></tr>
             <tr><td>/error/i</td><td>Case-insensitive regex</td></tr>
             <tr><td>"hello world"</td><td>Quoted phrase (exact match)</td></tr>
+            <tr><td>num:&gt;3</td><td>Any number in text greater than 3</td></tr>
+            <tr><td>num:&lt;=9.99</td><td>Any number in text ≤ 9.99 (float)</td></tr>
+            <tr><td>date:&gt;=2023-01-01</td><td>Any date in text on or after 2023-01-01</td></tr>
+            <tr><td>num:=42</td><td>Any number in text equals 42</td></tr>
+            <tr><td>num:&gt;=5 AND num:&lt;=10</td><td>Numeric range (combine two comparisons)</td></tr>
+            <tr><td>"took {num:&lt;50} ms"</td><td>Positional template — number must be &lt; 50 <em>at that position</em></td></tr>
+            <tr><td>"test {num:&gt;0} in {num:&lt;100} ms"</td><td>Multiple placeholders in one template</td></tr>
+            <tr><td>"deployed {date:&gt;2024-01-01}"</td><td>Date placeholder in a positional template</td></tr>
         </table>
     </div>
 
@@ -561,6 +580,20 @@
             text: '',
             list: 'Senior backend engineer\nFrontend intern position\nBackend developer role\nFrontend lead engineer\nIntern project assistant',
             desc: 'Complex nested query'
+        },
+        {
+            query: 'num:>3',
+            mode: 'list',
+            text: '',
+            list: 'event 1 low priority\nevent 5 high priority\nevent 3 medium\nevent 10 critical\nno numbers here',
+            desc: 'Number comparison — greater than'
+        },
+        {
+            query: 'num:<=9.99',
+            mode: 'list',
+            text: '',
+            list: 'item costs 5.00 dollars\nitem costs 9.99 on sale\nitem costs 15.50 premium\nitem costs 0.99 bargain',
+            desc: 'Float comparison — less or equal'
         }
     ];
 
@@ -621,6 +654,41 @@
             text: '',
             list: 'MyP@ssw0rd!\npassword123\nABC123!@#\nhello\nC0mpl3x!Pass\nnospecialchar1A\n!!@@##$$\nGoodP4$$word\nThis is a very long string that exceeds fifty characters and should be filtered out even if it has A1! mixed case',
             desc: '🔐 Password validator — length + complexity regex'
+        },
+        {
+            query: '(/error/i OR /fatal/i) AND num:>=3 AND date:>=2025-03-01',
+            mode: 'list',
+            text: '',
+            list: '2025-03-15 ERROR severity 5 — Database connection timeout\n2025-03-14 FATAL severity 4 — Out of memory\n2025-03-15 ERROR severity 2 — Minor validation failure\n2025-03-15 INFO severity 1 — Server started\n2025-02-28 ERROR severity 3 — Old disk space warning',
+            desc: '🚨 Monitoring — severity number + date comparison'
+        },
+        {
+            query: 'date:>=2023-06-01 AND date:<=2023-06-30 AND NOT cancelled',
+            mode: 'list',
+            text: '',
+            list: 'conference on 2023-06-15 confirmed\nworkshop on 2023-05-31 completed\nmeetup on 2023-07-01 planned\nlaunch on 2023-06-01 cancelled\nrelease on 2023-06-20 shipped\ndeadline on 2023-06-30 met',
+            desc: '📅 Date range filter — events in June 2023'
+        },
+        {
+            query: '(num:=200 OR num:=201) AND NOT /error/i AND num:<500',
+            mode: 'list',
+            text: '',
+            list: 'GET /api/users 200 120ms ok\nPOST /api/users 201 340ms created\nGET /api/data 200 800ms slow\nGET /api/health 500 50ms error\nPOST /api/upload 200 150ms Error in payload\nDELETE /api/item 200 90ms ok',
+            desc: '📊 API filter — status codes + response time'
+        },
+        {
+            query: '"test 1 Success evaluated in {num:<50} ms"',
+            mode: 'list',
+            text: '',
+            list: 'test 1 Success evaluated in 12 ms\ntest 1 Success evaluated in 80 ms\ntest 2 Success evaluated in 5 ms\ntest 1 Failure evaluated in 12 ms',
+            desc: '📐 Positional template — only the number before "ms" is checked'
+        },
+        {
+            query: '"build {num:>100} on {date:>2024-01-01}" AND Success',
+            mode: 'list',
+            text: '',
+            list: 'Success build 250 on 2024-06-15 deployed\nSuccess build 50 on 2024-06-15 deployed\nSuccess build 250 on 2023-12-01 deployed\nFailure build 250 on 2024-06-15 reverted\nSuccess build 200 on 2024-03-10 released',
+            desc: '🔗 Template with num + date placeholders + boolean'
         }
     ];
 
@@ -677,19 +745,29 @@
         try {
             pyodide = await loadPyodide();
 
-            // Load the parser source code into Pyodide
-            const parserSource = await fetch('parser.py').then(r => r.text());
-            pyodide.runPython(parserSource);
+            const manifest = await fetch('manifest.json').then(r => r.json());
+            const root = pyodide.FS.cwd();
+            for (const file of manifest.files) {
+                const path = `${manifest.package}/${file}`;
+                const source = await fetch(path).then(r => {
+                    if (!r.ok) throw new Error(`Could not load ${path}`);
+                    return r.text();
+                });
+                const target = `${root}/${path}`;
+                pyodide.FS.mkdirTree(target.slice(0, target.lastIndexOf('/')));
+                pyodide.FS.writeFile(target, source);
+            }
 
             // Helper function to run queries from JS
             pyodide.runPython(`
 import json as _json
+from boolean_query_parser import apply_query, parse_query
 
-def _run_playground(query_str, text_data_json, mode):
+def _run_playground(query_str, text_data_json, mode, ignore_case):
     """Run a query and return JSON results for the playground."""
     result = {}
     try:
-        ast = parse_query(query_str)
+        ast = parse_query(query_str, ignore_case=ignore_case)
         result['ast'] = repr(ast)
 
         if mode == 'single':
@@ -716,7 +794,7 @@ def _run_playground(query_str, text_data_json, mode):
             loader.innerHTML = `
                 <div style="color: var(--red); text-align: center; padding: 2rem;">
                     <p style="font-size: 1.2rem; margin-bottom: 0.5rem;">Failed to load Python runtime</p>
-                    <p style="color: var(--text-muted);">${escapeHtml(err.message)}</p>
+                    <p style="color: var(--text-muted);">${escapeHtml(String((err && err.message) || err))}</p>
                 </div>`;
         }
     }
@@ -743,7 +821,7 @@ def _run_playground(query_str, text_data_json, mode):
 
         try {
             const resultJson = pyodide.runPython(
-                `_run_playground(${JSON.stringify(queryStr)}, ${JSON.stringify(textDataJson)}, ${JSON.stringify(mode)})`
+                `_run_playground(${JSON.stringify(queryStr)}, ${JSON.stringify(textDataJson)}, ${JSON.stringify(mode)}, ${document.getElementById('ignore-case').checked ? 'True' : 'False'})`
             );
             const result = JSON.parse(resultJson);
 
