@@ -10,11 +10,15 @@ from .tokens import ComparisonLiteral, RegexLiteral, Token, TokenType
 KEYWORDS = {"AND": TokenType.AND, "OR": TokenType.OR, "NOT": TokenType.NOT}
 QUOTES = frozenset("\"'")
 WHITESPACE = frozenset(" \t\n\r")
-WORD_PUNCTUATION = frozenset("_.-+#@")
+WORD_PUNCTUATION = frozenset("_.-+#@*")
 VALUE_PUNCTUATION = frozenset("_.-+/:")
 
 
 def _is_word_start(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
+def _is_flag_char(char: str) -> bool:
     return char.isalnum() or char == "_"
 
 
@@ -31,7 +35,9 @@ class Lexer:
     Splits a query into tokens.
 
     Bare words may contain ``_ . - + # @`` after their first character, so
-    ``node.js``, ``e-mail`` and ``C++`` need no quotes.
+    ``node.js``, ``e-mail`` and ``C++`` need no quotes. A ``*`` anywhere in a
+    bare word makes it a wildcard. ``name:`` followed by an operator is a
+    comparison (``num:>5``); followed by anything else it scopes a term to a field.
     """
 
     def __init__(self, query: str) -> None:
@@ -58,7 +64,7 @@ class Lexer:
             return self._read_regex()
         if char in QUOTES:
             return self._read_quoted()
-        if _is_word_start(char):
+        if _is_word_start(char) or (char == "*" and _is_word_start(self._peek(1))):
             return self._read_word()
         raise QuerySyntaxError(
             f"Unrecognized character '{char}' at position {self._position}. "
@@ -81,7 +87,7 @@ class Lexer:
                 f"Regex patterns must be enclosed in forward slashes, e.g. /pattern/",
                 start,
             )
-        flags = self._consume_while(_is_word_start)
+        flags = self._consume_while(_is_flag_char)
         if not pattern:
             raise QuerySyntaxError(f"Empty regex at position {start}", start)
         return self._token(TokenType.REGEX, RegexLiteral(pattern, flags), start)
@@ -105,11 +111,21 @@ class Lexer:
         start = self._position
         word = self._consume_while(_is_word_char)
         if self._peek() == ":":
-            return self._read_comparison(word, start)
+            if self._operator_at(self._position + 1):
+                return self._read_comparison(word, start)
+            if "*" in word or word.upper() in KEYWORDS:
+                raise QuerySyntaxError(f"Invalid field name {word!r} at position {start}", start)
+            self._position += 1
+            return self._token(TokenType.FIELD, word, start)
         keyword = KEYWORDS.get(word.upper())
         if keyword is not None:
             return self._token(keyword, word.upper(), start)
+        if "*" in word:
+            return self._token(TokenType.WILDCARD, word, start)
         return self._token(TokenType.TEXT, word, start)
+
+    def _operator_at(self, position: int) -> bool:
+        return any(self._query.startswith(symbol, position) for symbol in OPERATORS)
 
     def _read_comparison(self, kind: str, start: int) -> Token:
         self._position += 1
@@ -160,8 +176,9 @@ class Lexer:
     def _skip_whitespace(self) -> None:
         self._consume_while(WHITESPACE.__contains__)
 
-    def _peek(self) -> str:
-        return self._query[self._position] if not self._at_end() else ""
+    def _peek(self, offset: int = 0) -> str:
+        position = self._position + offset
+        return self._query[position] if position < len(self._query) else ""
 
     def _at_end(self) -> bool:
         return self._position >= len(self._query)

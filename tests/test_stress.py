@@ -421,7 +421,7 @@ class TestStressAndNasty(unittest.TestCase):
         with self.assertRaises(TypeError):
             apply_query(query, 42)
         with self.assertRaises(TypeError):
-            apply_query(query, {"key": "value"})
+            apply_query(query, b"test")
 
     # ── Implicit AND comprehensive ────────────────────────────────────
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from typing import Iterator, Union
+from typing import Iterator, Tuple, Union
 
 from .dates import DATE_PATTERN, inside_date
 
 Number = Union[int, float]
+Span = Tuple[int, int]
 
 NUMBER_PATTERN = r"-?\d+(?:\.\d+)?"
 
@@ -34,8 +35,8 @@ def to_number(found: str) -> Number:
     return float(found)
 
 
-def numbers_in(text: str) -> Iterator[str]:
-    """Yield the numbers in ``text`` that are not part of a date or a dotted run like ``1.2.3``.
+def numbers_in(text: str) -> Iterator[Span]:
+    """Yield the spans of the numbers in ``text`` that are not part of a date or a dotted run like ``1.2.3``.
 
     A minus right after a word character is a hyphen, not a sign, so
     ``"pages 3-7"`` yields 3 and 7.
@@ -44,13 +45,13 @@ def numbers_in(text: str) -> Iterator[str]:
         found = match.group("number")
         if found is None:
             continue
-        start = match.start()
+        start, end = match.span()
         before = text[start - 1] if start else ""
         if before == ".":
             continue
         if found[0] == "-" and (before.isalnum() or before == "_"):
-            found = found[1:]
-        yield found
+            start += 1
+        yield start, end
 
 
 def standalone_number(text: str, start: int, end: int) -> bool:

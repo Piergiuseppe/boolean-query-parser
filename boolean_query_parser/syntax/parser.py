@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 
 from ..exceptions import QuerySyntaxError
 from ..nodes import (
     AndNode,
     ComparisonNode,
+    FieldNode,
     Node,
     NotNode,
     OrNode,
@@ -13,12 +14,13 @@ from ..nodes import (
     TemplateNode,
     TextNode,
 )
+from ..options import QueryOptions
 from .tokens import Token, TokenType
-
-MAX_DEPTH = 100
 
 IMPLICIT_AND_STARTERS = frozenset({
     TokenType.TEXT,
+    TokenType.WILDCARD,
+    TokenType.FIELD,
     TokenType.REGEX,
     TokenType.COMPARISON,
     TokenType.TEMPLATE,
@@ -34,29 +36,29 @@ class Parser:
         query    := or_expr
         or_expr  := and_expr ('OR' and_expr)*
         and_expr := not_expr ('AND'? not_expr)*
-        not_expr := 'NOT' not_expr | atom
-        atom     := TEXT | REGEX | COMPARISON | TEMPLATE | '(' or_expr ')'
+        not_expr := 'NOT' not_expr | FIELD not_expr | atom
+        atom     := TEXT | WILDCARD | REGEX | COMPARISON | TEMPLATE | '(' or_expr ')'
     """
 
-    def __init__(
-        self,
-        tokens: List[Token],
-        ignore_case: bool = False,
-        max_depth: int = MAX_DEPTH,
-    ) -> None:
+    def __init__(self, tokens: List[Token], options: Optional[QueryOptions] = None) -> None:
         if not tokens or tokens[-1].type is not TokenType.EOF:
             raise QuerySyntaxError("Invalid token stream, missing EOF")
         self._tokens = tokens
         self._current = 0
-        self._ignore_case = ignore_case
-        self._max_depth = max_depth
+        self._options = options = options or QueryOptions()
+        self._inside_field = False
         self._atom_builders: Dict[TokenType, Callable[[Token], Node]] = {
-            TokenType.TEXT: lambda token: TextNode(token.value, ignore_case),
-            TokenType.REGEX: lambda token: RegexNode(token.value.pattern, token.value.flags, ignore_case),
+            TokenType.TEXT: lambda token: TextNode(
+                token.value, options.ignore_case, options.whole_words
+            ),
+            TokenType.WILDCARD: lambda token: TextNode(
+                token.value, options.ignore_case, options.whole_words, wildcard=True
+            ),
+            TokenType.REGEX: self._build_regex,
             TokenType.COMPARISON: lambda token: ComparisonNode(
                 token.value.kind, token.value.operator, token.value.value
             ),
-            TokenType.TEMPLATE: lambda token: TemplateNode(token.value, ignore_case),
+            TokenType.TEMPLATE: lambda token: TemplateNode(token.value, options.ignore_case),
         }
 
     def parse(self) -> Node:
@@ -85,7 +87,27 @@ class Parser:
         token = self._peek()
         if self._accept(TokenType.NOT):
             return NotNode(self._parse_not(self._deeper(depth, token)))
+        if self._accept(TokenType.FIELD):
+            return self._parse_field(token, depth)
         return self._parse_atom(depth)
+
+    def _parse_field(self, token: Token, depth: int) -> Node:
+        if self._inside_field:
+            raise QuerySyntaxError(
+                f"Field {token.describe()} at position {token.position} is inside another field; "
+                f"fields cannot be nested",
+                token.position,
+            )
+        self._inside_field = True
+        try:
+            return FieldNode(token.value, self._parse_not(self._deeper(depth, token)))
+        finally:
+            self._inside_field = False
+
+    def _build_regex(self, token: Token) -> Node:
+        if not self._options.allow_regex:
+            raise ValueError("Regular expressions are disabled for this query; quote the term to match it literally")
+        return RegexNode(token.value.pattern, token.value.flags, self._options.ignore_case)
 
     def _parse_atom(self, depth: int) -> Node:
         token = self._advance()
@@ -106,9 +128,9 @@ class Parser:
             raise QuerySyntaxError(f"{error} (in the term at position {token.position})", token.position) from None
 
     def _deeper(self, depth: int, token: Token) -> int:
-        if depth >= self._max_depth:
+        if depth >= self._options.max_depth:
             raise QuerySyntaxError(
-                f"Query nests deeper than {self._max_depth} levels at position {token.position}",
+                f"Query nests deeper than {self._options.max_depth} levels at position {token.position}",
                 token.position,
             )
         return depth + 1

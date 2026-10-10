@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from typing import List, Match, Pattern, Tuple
+from typing import Iterator, List, Match, Pattern, Tuple
 
 from ..values import KINDS, OPERATORS, ValueKind, resolve_kind
 from ..values.kinds import ValueTest
-from .base import Node, Predicate
+from ..explanation import Span
+from .base import Leaf, TextPredicate
 
 PLACEHOLDER = re.compile(
     r"\{(" + "|".join(KINDS) + r"):("
@@ -15,7 +16,7 @@ PLACEHOLDER = re.compile(
 )
 
 
-class TemplateNode(Node):
+class TemplateNode(Leaf):
     """
     A quoted phrase with ``{kind:op value}`` placeholders, e.g. ``"took {num:<50} ms"``.
 
@@ -29,37 +30,50 @@ class TemplateNode(Node):
         self.template = template
         self._regex, self._placeholders = _build(template, ignore_case)
 
-    def compile(self) -> Predicate:
+    def text_predicate(self) -> TextPredicate:
         search = self._regex.search
-        placeholders = tuple(enumerate(self._placeholders, start=1))
+        placeholders = self._placeholders
 
-        def accepts(match: Match[str], text: str) -> bool:
-            for group, (kind, test) in placeholders:
-                start, end = match.span(group)
-                if not (test(text[start:end]) and kind.standalone(text, start, end)):
-                    return False
-            return True
-
-        # Restarting one character after each rejected candidate lets
-        # candidates overlap, so a failed comparison never hides a later one.
         def predicate(text: str) -> bool:
             match = search(text)
             while match is not None:
-                if accepts(match, text):
+                if _accepts(placeholders, match, text):
                     return True
                 match = search(text, match.start() + 1)
             return False
 
         return predicate
 
+    def spans(self, text: str) -> Iterator[Span]:
+        for match in self._candidates(text):
+            yield match.span()
+
+    def _candidates(self, text: str) -> Iterator[Match[str]]:
+        # Restarting one character after each candidate lets candidates
+        # overlap, so a failed comparison never hides a later one.
+        search = self._regex.search
+        match = search(text)
+        while match is not None:
+            if _accepts(self._placeholders, match, text):
+                yield match
+            match = search(text, match.start() + 1)
+
     def __repr__(self) -> str:
         return f"Template({self.template!r})"
 
 
-Placeholder = Tuple[ValueKind, ValueTest]
+Placeholder = Tuple[int, ValueKind, ValueTest]
 
 
-def _build(template: str, ignore_case: bool) -> Tuple[Pattern[str], List[Placeholder]]:
+def _accepts(placeholders: Tuple[Placeholder, ...], match: Match[str], text: str) -> bool:
+    for group, kind, test in placeholders:
+        start, end = match.span(group)
+        if not (test(text[start:end]) and kind.standalone(text, start, end)):
+            return False
+    return True
+
+
+def _build(template: str, ignore_case: bool) -> Tuple[Pattern[str], Tuple[Placeholder, ...]]:
     parts: List[str] = []
     placeholders: List[Placeholder] = []
     literal_start = 0
@@ -68,7 +82,7 @@ def _build(template: str, ignore_case: bool) -> Tuple[Pattern[str], List[Placeho
         kind = resolve_kind(kind_name)
         parts.append(_literal(template[literal_start:placeholder.start()], ignore_case))
         parts.append(f"({kind.pattern})")
-        placeholders.append((kind, kind.bind(operator, threshold.strip())))
+        placeholders.append((len(placeholders) + 1, kind, kind.bind(operator, threshold.strip())))
         literal_start = placeholder.end()
     parts.append(_literal(template[literal_start:], ignore_case))
 
@@ -77,7 +91,7 @@ def _build(template: str, ignore_case: bool) -> Tuple[Pattern[str], List[Placeho
             "Template must contain at least one placeholder, "
             "e.g. {num:>5} or {date:<=2024-01-01}"
         )
-    return re.compile("".join(parts)), placeholders
+    return re.compile("".join(parts)), tuple(placeholders)
 
 
 def _literal(text: str, ignore_case: bool) -> str:

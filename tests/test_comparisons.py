@@ -362,10 +362,12 @@ class TestComparisonOperators(unittest.TestCase):
         with self.assertRaises(QueryError):
             parse_query("num:>abc")
 
-    def test_colon_without_operator_still_raises(self):
-        """field:text without a comparison operator remains an error."""
+    def test_colon_without_operator_is_a_field_that_plain_text_rejects(self):
+        query = parse_query("field:text")
         with self.assertRaises(QueryError):
-            parse_query("field:text")
+            apply_query(query, "field:text")
+        with self.assertRaises(QueryError):
+            parse_query("num:")
 
     def test_comparison_repr(self):
         """Verify __repr__ of ComparisonNode."""

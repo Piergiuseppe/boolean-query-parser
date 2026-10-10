@@ -14,7 +14,7 @@ class ApplyQueryInputTests(unittest.TestCase):
         self.assertEqual(apply_query(self.query, iter(["py"])), ["py"])
 
     def test_rejects_non_text_inputs(self):
-        for data in (42, None, {"py": 1}, b"py", bytearray(b"py")):
+        for data in (42, None, b"py", bytearray(b"py")):
             with self.subTest(data=data):
                 with self.assertRaises(TypeError):
                     apply_query(self.query, data)
@@ -40,7 +40,7 @@ class IgnoreCaseTests(unittest.TestCase):
             ('"Hello World"', "hello world"),
             ("/pyth.n/", "PYTHON"),
             ('"Took {num:<50} MS"', "took 12 ms"),
-            ("STRASSE", "straße"),
+            ("CAFÉ", "café"),
         ]
         for query, text in cases:
             with self.subTest(query=query):

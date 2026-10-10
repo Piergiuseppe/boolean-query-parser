@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Sequence, Tuple
+from typing import Callable, Iterable, Sequence, Tuple
 
-from .base import Node, Predicate
+from ..explanation import Explanation
+from .base import Node, Predicate, Subject
 
 
 class NotNode(Node):
@@ -11,9 +12,16 @@ class NotNode(Node):
     def __init__(self, child: Node) -> None:
         self.child = child
 
-    def compile(self) -> Predicate:
-        child = self.child.compile()
-        return lambda text: not child(text)
+    def compile(self, records: bool = False) -> Predicate:
+        child = self.child.compile(records)
+        return lambda subject: not child(subject)
+
+    def explain(self, subject: Subject) -> Explanation:
+        child = self.child.explain(subject)
+        return Explanation(self, not child.matched, children=(child,), negates=True)
+
+    def label(self) -> str:
+        return "NOT"
 
     def __repr__(self) -> str:
         return f"NOT({self.child!r})"
@@ -23,6 +31,7 @@ class _JunctionNode(Node):
     __slots__ = ("operands",)
 
     symbol = ""
+    decide: Callable[[Iterable[bool]], bool] = all
 
     def __init__(self, *operands: Node) -> None:
         if len(operands) < 2:
@@ -40,6 +49,21 @@ class _JunctionNode(Node):
             else:
                 yield operand
 
+    def compile(self, records: bool = False) -> Predicate:
+        return self.combine(tuple(operand.compile(records) for operand in self.operands))
+
+    @staticmethod
+    def combine(predicates: Tuple[Predicate, ...]) -> Predicate:
+        raise NotImplementedError
+
+    def explain(self, subject: Subject) -> Explanation:
+        children = tuple(operand.explain(subject) for operand in self.operands)
+        matched = type(self).decide(child.matched for child in children)
+        return Explanation(self, matched, children=children)
+
+    def label(self) -> str:
+        return self.symbol
+
     def __repr__(self) -> str:
         return "(" + f" {self.symbol} ".join(map(repr, self.operands)) + ")"
 
@@ -48,16 +72,17 @@ class AndNode(_JunctionNode):
     __slots__ = ()
 
     symbol = "AND"
+    decide = all
 
-    def compile(self) -> Predicate:
-        predicates = tuple(operand.compile() for operand in self.operands)
+    @staticmethod
+    def combine(predicates: Tuple[Predicate, ...]) -> Predicate:
         if len(predicates) == 2:
             left, right = predicates
-            return lambda text: left(text) and right(text)
+            return lambda subject: left(subject) and right(subject)
 
-        def every(text: str) -> bool:
+        def every(subject) -> bool:
             for predicate in predicates:
-                if not predicate(text):
+                if not predicate(subject):
                     return False
             return True
 
@@ -68,16 +93,17 @@ class OrNode(_JunctionNode):
     __slots__ = ()
 
     symbol = "OR"
+    decide = any
 
-    def compile(self) -> Predicate:
-        predicates = tuple(operand.compile() for operand in self.operands)
+    @staticmethod
+    def combine(predicates: Tuple[Predicate, ...]) -> Predicate:
         if len(predicates) == 2:
             left, right = predicates
-            return lambda text: left(text) or right(text)
+            return lambda subject: left(subject) or right(subject)
 
-        def some(text: str) -> bool:
+        def some(subject) -> bool:
             for predicate in predicates:
-                if predicate(text):
+                if predicate(subject):
                     return True
             return False
 

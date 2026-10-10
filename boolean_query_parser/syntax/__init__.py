@@ -1,5 +1,6 @@
 from .lexer import Lexer
-from .parser import MAX_DEPTH, Parser
+from ..options import MAX_DEPTH
+from .parser import Parser
 from .tokens import ComparisonLiteral, RegexLiteral, Token, TokenType
 
 __all__ = [

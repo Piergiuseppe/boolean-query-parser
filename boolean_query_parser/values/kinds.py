@@ -1,11 +1,20 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, Iterator
+from typing import Callable, Dict, Iterator, Tuple
 
 from .dates import BOUNDED_DATE_PATTERN, dates_in, parse_date, precision, truncate
 from .numbers import BOUNDED_NUMBER_PATTERN, numbers_in, parse_number, standalone_number, to_number
 from .operators import resolve_operator
+from .quantities import (
+    DURATION_PATTERN,
+    SIZE_PATTERN,
+    durations_in,
+    parse_duration,
+    parse_size,
+    sizes_in,
+)
 
+Span = Tuple[int, int]
 ValueTest = Callable[[str], bool]
 
 
@@ -19,7 +28,7 @@ class ValueKind:
     name: str
     pattern: str
 
-    def scan(self, text: str) -> Iterator[str]:
+    def scan(self, text: str) -> Iterator[Span]:
         raise NotImplementedError
 
     def standalone(self, text: str, start: int, end: int) -> bool:
@@ -33,7 +42,7 @@ class NumberKind(ValueKind):
     name = "num"
     pattern = BOUNDED_NUMBER_PATTERN
 
-    def scan(self, text: str) -> Iterator[str]:
+    def scan(self, text: str) -> Iterator[Span]:
         return numbers_in(text)
 
     def standalone(self, text: str, start: int, end: int) -> bool:
@@ -51,7 +60,7 @@ class DateKind(ValueKind):
     name = "date"
     pattern = BOUNDED_DATE_PATTERN
 
-    def scan(self, text: str) -> Iterator[str]:
+    def scan(self, text: str) -> Iterator[Span]:
         return dates_in(text)
 
     def bind(self, operator: str, threshold: str) -> ValueTest:
@@ -67,6 +76,25 @@ class DateKind(ValueKind):
         return _ignoring_invalid(test)
 
 
+class QuantityKind(ValueKind):
+    """An amount with a unit, compared after conversion to a base unit."""
+
+    def __init__(self, name: str, pattern: str, scan, parse) -> None:
+        self.name = name
+        self.pattern = pattern
+        self._scan = scan
+        self._parse = parse
+
+    def scan(self, text: str) -> Iterator[Span]:
+        return self._scan(text)
+
+    def bind(self, operator: str, threshold: str) -> ValueTest:
+        compare = resolve_operator(operator)
+        target = self._parse(threshold)
+        parse = self._parse
+        return lambda found: compare(parse(found), target)
+
+
 def _ignoring_invalid(test: ValueTest) -> ValueTest:
     def guarded(found: str) -> bool:
         try:
@@ -77,7 +105,15 @@ def _ignoring_invalid(test: ValueTest) -> ValueTest:
     return guarded
 
 
-KINDS: Dict[str, ValueKind] = {kind.name: kind for kind in (NumberKind(), DateKind())}
+KINDS: Dict[str, ValueKind] = {
+    kind.name: kind
+    for kind in (
+        NumberKind(),
+        DateKind(),
+        QuantityKind("dur", DURATION_PATTERN, durations_in, parse_duration),
+        QuantityKind("size", SIZE_PATTERN, sizes_in, parse_size),
+    )
+}
 
 
 def resolve_kind(name: str) -> ValueKind:
@@ -86,5 +122,6 @@ def resolve_kind(name: str) -> ValueKind:
     except KeyError:
         raise ValueError(
             f"Unknown comparison type '{name}'. "
-            f"Supported types: {', '.join(sorted(KINDS))}"
+            f"Supported types: {', '.join(sorted(KINDS))}. "
+            f"To compare a field of a record, write e.g. {name}:num:>5"
         ) from None

@@ -66,8 +66,6 @@ class LexerTests(unittest.TestCase):
             "a /open": 2,
             "a //": 2,
             "a + b": 2,
-            "x num:": 2,
-            "x field:text": 2,
         }
         for query, position in cases.items():
             with self.subTest(query=query):

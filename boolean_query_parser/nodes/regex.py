@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+from typing import Iterator
 
-from .base import Node, Predicate
+from ..explanation import Span
+from .base import Leaf, TextPredicate
 
 FLAGS = {
     "i": re.IGNORECASE,
@@ -12,7 +14,7 @@ FLAGS = {
 }
 
 
-class RegexNode(Node):
+class RegexNode(Leaf):
     __slots__ = ("pattern", "flags", "regex")
 
     def __init__(self, pattern: str, flags: str = "", ignore_case: bool = False) -> None:
@@ -23,9 +25,13 @@ class RegexNode(Node):
         except (re.error, OverflowError, RecursionError) as error:
             raise ValueError(f"Invalid regular expression /{pattern}/: {error}") from None
 
-    def compile(self) -> Predicate:
+    def text_predicate(self) -> TextPredicate:
         search = self.regex.search
         return lambda text: search(text) is not None
+
+    def spans(self, text: str) -> Iterator[Span]:
+        for match in self.regex.finditer(text):
+            yield match.span()
 
     def __repr__(self) -> str:
         return f"Regex({self.pattern!r}, flags={self.flags!r})" if self.flags else f"Regex({self.pattern!r})"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Iterator
+from typing import Iterator, Tuple
 
 DATE_PATTERN = r"\d{4}[-/]\d{2}[-/]\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?!\d))?"
 BOUNDED_DATE_PATTERN = rf"(?<!\d){DATE_PATTERN}(?!\d)"
@@ -36,12 +36,12 @@ def truncate(moment: datetime, fields: int) -> datetime:
     return moment
 
 
-def dates_in(text: str) -> Iterator[str]:
+def dates_in(text: str) -> Iterator[Tuple[int, int]]:
     for match in _DATE.finditer(text):
         start, end = match.span()
         if (start and text[start - 1].isdigit()) or text[end:end + 1].isdigit():
             continue
-        yield match.group()
+        yield start, end
 
 
 def inside_date(text: str, start: int, end: int) -> bool:

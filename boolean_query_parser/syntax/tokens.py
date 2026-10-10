@@ -12,6 +12,8 @@ class TokenType(Enum):
     LPAREN = auto()
     RPAREN = auto()
     TEXT = auto()
+    WILDCARD = auto()
+    FIELD = auto()
     REGEX = auto()
     COMPARISON = auto()
     TEMPLATE = auto()
