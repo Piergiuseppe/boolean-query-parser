@@ -17,12 +17,17 @@ BUNDLE = ROOT / "docs" / "boolean_query_parser"
 MANIFEST = ROOT / "docs" / "manifest.json"
 
 
+# The playground only imports the library, never the command line tool.
+EXCLUDED = ("cli/", "__main__.py")
+
+
 def package_files() -> list[str]:
-    return sorted(
+    names = (
         path.relative_to(PACKAGE).as_posix()
         for path in PACKAGE.rglob("*.py")
         if "__pycache__" not in path.parts
     )
+    return sorted(name for name in names if not name.startswith(EXCLUDED))
 
 
 def manifest() -> str:

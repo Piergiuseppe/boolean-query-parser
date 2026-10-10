@@ -304,6 +304,19 @@
             padding-left: 0.75rem;
         }
 
+        .result-content mark {
+            background: var(--accent);
+            color: #fff;
+            border-radius: 3px;
+            padding: 0 2px;
+        }
+
+        .options-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0 1.25rem;
+        }
+
         .result-stats {
             font-size: 0.78rem;
             color: var(--text-muted);
@@ -465,7 +478,10 @@
             <label for="query-input">Boolean expression</label>
             <input type="text" id="query-input" placeholder='e.g. python AND (django OR flask) NOT ruby' autocomplete="off" spellcheck="false">
             <div class="input-hint">Supports: <code>AND</code>, <code>OR</code>, <code>NOT</code>, parentheses, regex <code>/pattern/flags</code>, implicit AND, comparisons <code>num:&gt;5</code> <code>date:&gt;2023-01-01</code>, templates <code>"text {num:&lt;50} ms"</code></div>
-            <label class="option"><input type="checkbox" id="ignore-case"> Ignore case</label>
+            <div class="options-row">
+                <label class="option"><input type="checkbox" id="ignore-case"> Ignore case</label>
+                <label class="option"><input type="checkbox" id="whole-words"> Whole words</label>
+            </div>
         </div>
 
         <div class="mode-toggle">
@@ -479,7 +495,7 @@
         </div>
 
         <div class="input-group" id="list-input-group" style="display:none">
-            <label for="list-input">Texts to filter (one per line)</label>
+            <label for="list-input">Texts to filter, one per line (JSON objects are searched as records, e.g. <code>title:python</code>)</label>
             <textarea id="list-input" placeholder="python django web app&#10;ruby rails project&#10;python flask API&#10;java spring boot&#10;python numpy data science"></textarea>
         </div>
 
@@ -689,6 +705,27 @@
             text: '',
             list: 'Success build 250 on 2024-06-15 deployed\nSuccess build 50 on 2024-06-15 deployed\nSuccess build 250 on 2023-12-01 deployed\nFailure build 250 on 2024-06-15 reverted\nSuccess build 200 on 2024-03-10 released',
             desc: '🔗 Template with num + date placeholders + boolean'
+        },
+        {
+            query: 'ERROR AND (dur:>1s OR size:>10MB) NOT healthcheck',
+            mode: 'list',
+            text: '',
+            list: 'ERROR request /api/users took 1500ms\nERROR upload of 12 MB rejected\nERROR request /api/items took 300ms\nINFO healthcheck took 2s\nERROR healthcheck took 3s\nERROR backup of 512KiB failed after 45 min',
+            desc: '⏱ Durations and sizes, with units converted'
+        },
+        {
+            query: 'title:Pyth* AND views:num:>100',
+            mode: 'list',
+            text: '',
+            list: '{"title": "Python tips", "author": {"name": "ann"}, "views": 1500, "tags": ["web", "py"]}\n{"title": "Rust in production", "author": {"name": "bob"}, "views": 320, "tags": ["systems"]}\n{"title": "Python packaging", "author": {"name": "cy"}, "views": 40, "tags": ["py"]}\n{"title": "Go concurrency", "author": {"name": "ann"}, "views": 900, "tags": ["systems"]}',
+            desc: '🗂 JSON records: field-scoped terms and nested values'
+        },
+        {
+            query: 'deploy* NOT /fail(ed|ure)/i (prod OR num:>=3)',
+            mode: 'single',
+            text: 'deployed build 7 to prod after 3 retries',
+            list: '',
+            desc: '🔎 Wildcards + highlights + why it matched'
         }
     ];
 
@@ -735,6 +772,14 @@
         runQuery();
     }
 
+    function pyBool(id) {
+        return document.getElementById(id).checked ? 'True' : 'False';
+    }
+
+    function markHits(s) {
+        return escapeHtml(s).replace(/\u0000/g, '<mark>').replace(/\u0001/g, '</mark>');
+    }
+
     function escapeHtml(s) {
         return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
@@ -761,23 +806,48 @@
             // Helper function to run queries from JS
             pyodide.runPython(`
 import json as _json
-from boolean_query_parser import apply_query, parse_query
+from boolean_query_parser import apply_query, explain_query, parse_query
 
-def _run_playground(query_str, text_data_json, mode, ignore_case):
+_OPEN, _CLOSE = "\\x00", "\\x01"
+
+def _as_records(lines):
+    records = []
+    for line in lines:
+        try:
+            value = _json.loads(line)
+        except ValueError:
+            return None
+        if not isinstance(value, dict):
+            return None
+        records.append(value)
+    return records
+
+def _run_playground(query_str, text_data_json, mode, ignore_case, whole_words):
     """Run a query and return JSON results for the playground."""
     result = {}
     try:
-        ast = parse_query(query_str, ignore_case=ignore_case)
+        ast = parse_query(query_str, ignore_case=ignore_case, whole_words=whole_words)
         result['ast'] = repr(ast)
 
         if mode == 'single':
             text = _json.loads(text_data_json)
-            match = apply_query(ast, text)
-            result['match'] = match
+            explanation = explain_query(ast, text)
+            result['match'] = explanation.matched
+            result['highlighted'] = explanation.highlight(text, _OPEN, _CLOSE)
+            result['explanation'] = explanation.render()
         else:
             texts = _json.loads(text_data_json)
-            filtered = apply_query(ast, texts)
-            result['filtered'] = filtered
+            records = _as_records(texts) if texts else None
+            if records is not None:
+                result['filtered'] = [
+                    text for text, record in zip(texts, records) if apply_query(ast, record)
+                ]
+            else:
+                result['filtered'] = [
+                    explain_query(ast, text).highlight(text, _OPEN, _CLOSE)
+                    for text in apply_query(ast, texts)
+                ]
+            result['records'] = records is not None
             result['total'] = len(texts)
 
         result['ok'] = True
@@ -821,7 +891,7 @@ def _run_playground(query_str, text_data_json, mode, ignore_case):
 
         try {
             const resultJson = pyodide.runPython(
-                `_run_playground(${JSON.stringify(queryStr)}, ${JSON.stringify(textDataJson)}, ${JSON.stringify(mode)}, ${document.getElementById('ignore-case').checked ? 'True' : 'False'})`
+                `_run_playground(${JSON.stringify(queryStr)}, ${JSON.stringify(textDataJson)}, ${JSON.stringify(mode)}, ${pyBool('ignore-case')}, ${pyBool('whole-words')})`
             );
             const result = JSON.parse(resultJson);
 
@@ -847,9 +917,11 @@ def _run_playground(query_str, text_data_json, mode, ignore_case):
                         <div class="result-label ${isMatch ? 'result-label--match' : 'result-label--nomatch'}">
                             ${isMatch ? '✓ Match' : '✗ No Match'}
                         </div>
-                        <div class="result-content ${isMatch ? 'match' : 'nomatch'}">
-                            ${isMatch ? 'The text matches the query.' : 'The text does not match the query.'}
-                        </div>
+                        <div class="result-content ${isMatch ? 'match' : 'nomatch'}">${isMatch ? markHits(result.highlighted) : 'The text does not match the query.'}</div>
+                    </div>
+                    <div class="result-block">
+                        <div class="result-label result-label--ast">Why</div>
+                        <div class="result-content">${escapeHtml(result.explanation)}</div>
                     </div>`;
             } else {
                 const filtered = result.filtered || [];
@@ -861,11 +933,11 @@ def _run_playground(query_str, text_data_json, mode, ignore_case):
                         </div>
                         <div class="result-content filtered-list">
                             ${filtered.length > 0
-                                ? '<ul>' + filtered.map(t => `<li>${escapeHtml(t)}</li>`).join('') + '</ul>'
+                                ? '<ul>' + filtered.map(t => `<li>${markHits(t)}</li>`).join('') + '</ul>'
                                 : '<span style="color: var(--text-muted)">No texts matched the query.</span>'
                             }
                         </div>
-                        <div class="result-stats">${filtered.length} of ${total} texts matched</div>
+                        <div class="result-stats">${filtered.length} of ${total} ${result.records ? 'records' : 'texts'} matched</div>
                     </div>`;
             }
 

@@ -4,15 +4,21 @@
     "__init__.py",
     "api.py",
     "exceptions.py",
+    "explanation.py",
     "nodes/__init__.py",
     "nodes/base.py",
     "nodes/boolean.py",
     "nodes/comparison.py",
+    "nodes/field.py",
     "nodes/regex.py",
     "nodes/template.py",
     "nodes/text.py",
+    "nodes/wildcard.py",
+    "options.py",
     "parser.py",
+    "records.py",
     "services/__init__.py",
+    "services/explaining.py",
     "services/matching.py",
     "services/parsing.py",
     "syntax/__init__.py",
@@ -23,6 +29,7 @@
     "values/dates.py",
     "values/kinds.py",
     "values/numbers.py",
-    "values/operators.py"
+    "values/operators.py",
+    "values/quantities.py"
   ]
 }

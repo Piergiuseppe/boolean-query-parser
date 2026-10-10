@@ -4,7 +4,7 @@
 
 **[▶ Try it live in your browser](https://piergiuseppe.github.io/boolean-query-parser/)** — no install needed, runs via WebAssembly
 
-A lightweight, **zero-dependency** Python package for parsing and evaluating complex boolean text queries. Supports `AND`, `OR`, `NOT` operators, parentheses for nesting, regular expression pattern matching, and comparison operators (`>`, `<`, `>=`, `<=`, `=`) for numbers and dates found in the text — built entirely on the Python standard library.
+A lightweight, **zero-dependency** Python package for parsing and evaluating complex boolean queries over text and records. Supports `AND`, `OR`, `NOT`, parentheses, wildcards, regular expressions, comparisons for numbers, dates, durations and sizes found in the text, field-scoped terms for dictionaries, explanations of why something matched, and a grep-like command line tool — built entirely on the Python standard library.
 
 ## Features
 
@@ -14,21 +14,27 @@ A lightweight, **zero-dependency** Python package for parsing and evaluating com
 - Parentheses for grouping and complex nested expressions
 - Quoted strings for exact phrase matching (`"exact phrase"`)
 - Bare words may contain `_ . - + # @` after the first character, so `node.js`, `e-mail`, `C++` and `C#` need no quotes
-- Optional case-insensitive matching for the whole query: `parse_query(query, ignore_case=True)`
+- Wildcards in bare words: `pyth*` matches `python` and `pythonic`
+- Query-wide options: `ignore_case=True`, `whole_words=True`, and `allow_regex=False` for queries typed by untrusted users
 - Regular expression pattern matching with support for:
   - Regular expression flags (`i` for case-insensitive, `m` for multiline, `s` for dotall, `x` for verbose)
   - Complex patterns including capture groups, lookaheads, and lookbehinds
   - Special character escaping
-- Comparison operators for numbers and dates found in natural text:
+- Comparison operators for values found in natural text:
   - `num:>5` — finds any number in the text and checks if it's > 5
   - `date:>2023-01-01` — finds any date (YYYY-MM-DD, YYYY/MM/DD, optionally with a time) in the text and checks if it's after 2023-01-01
+  - `dur:>1.5s` — finds durations such as `250ms`, `2 min` or `3h`
+  - `size:>10MB` — finds sizes such as `512KiB` or `3 GB`
   - Supported operators: `>`, `<`, `>=`, `<=`, `=`
   - Combine with boolean operators for range queries (e.g. `num:>=5 AND num:<=10`)
 - Positional templates with `{num:op}` / `{date:op}` placeholders inside quoted strings:
   - `"evaluated in {num:<50} ms"` — matches text like `"evaluated in 12 ms"` while respecting order
   - Comparisons only apply to the number/date at the placeholder position, not elsewhere in the text
   - Supports multiple placeholders in a single template
-- Filters any iterable of strings (list, tuple, generator, ...)
+- Field-scoped terms for dictionaries and JSON records: `title:python AND meta.views:num:>100`
+- Filters any iterable of strings or of mappings (list, tuple, generator, ...)
+- `explain_query` tells you which terms matched and where, and highlights them
+- `bqp`, a grep-like command line tool for logs and JSON lines
 - Clear syntax errors that carry the position of the offending term
 
 ## Installation
@@ -238,6 +244,108 @@ print(apply_query(query, "PYTHON job took 12 ms TIMEOUT"))  # False
 
 `ignore_case=True` applies to text terms, quoted phrases, templates and regexes alike.
 
+### Whole Words and Wildcards
+
+By default a term matches anywhere, so `python` is found in `pythonic`. Pass `whole_words=True` to match whole words only, and use `*` in a bare word to match any run of letters, digits or underscores:
+
+```python
+from boolean_query_parser import parse_query, apply_query
+
+print(apply_query(parse_query("python"), "pythonic code"))                    # True
+print(apply_query(parse_query("python", whole_words=True), "pythonic code"))  # False
+print(apply_query(parse_query("pyth*", whole_words=True), "pythonic code"))   # True
+print(apply_query(parse_query("*thon", whole_words=True), "jython"))          # True
+```
+
+A quoted `"py*"` is a literal asterisk.
+
+### Durations and Sizes
+
+```python
+from boolean_query_parser import parse_query, apply_query
+
+slow = parse_query("ERROR AND (dur:>1s OR size:>10MB)")
+print(apply_query(slow, "ERROR request took 1500ms"))   # True
+print(apply_query(slow, "ERROR upload of 12 MB"))       # True
+print(apply_query(slow, "ERROR request took 300ms"))    # False
+print(apply_query(parse_query('"took {dur:<1s}"'), "request took 250ms"))  # True
+```
+
+Durations understand `us`, `ms`, `s`/`sec`/`seconds`, `m`/`min`/`minutes`, `h`/`hr`/`hours` and `d`/`days`. Sizes understand `B`/`bytes`, decimal `kB`/`MB`/`GB`/`TB` (powers of 1000) and binary `KiB`/`MiB`/`GiB`/`TiB` (powers of 1024), in any case. A space between amount and unit is allowed in the text; in a query, quote it: `dur:>"1.5 s"`.
+
+### Searching Records
+
+Pass dictionaries instead of strings and scope terms to fields with `field:term`. Unscoped terms search all the values of the record.
+
+```python
+from boolean_query_parser import parse_query, apply_query
+
+articles = [
+    {"title": "Python tips", "meta": {"author": "ann", "views": 1500}, "tags": ["web", "py"]},
+    {"title": "Rust", "body": "python is slow", "meta": {"author": "bob", "views": 20}},
+]
+
+query = parse_query("title:python AND meta.views:num:>100", ignore_case=True)
+print(apply_query(query, articles))                            # [the "Python tips" record]
+print(apply_query(parse_query("tags:web"), articles[0]))       # True
+print(len(apply_query(parse_query("python", ignore_case=True), articles)))  # 2
+```
+
+- A field can scope any term: `title:"exact phrase"`, `title:/^py/i`, `title:(rust OR go)`, `title:pyth*`, `price:num:>5`.
+- Dotted names reach into nested mappings (`meta.author`), unless a literal `"meta.author"` key exists.
+- Lists are searched item by item; numbers and booleans are read as text (`true`/`false`).
+- A missing field never matches, so `NOT title:x` selects records without a title too.
+- `name:` followed by an operator is a comparison, so write `views:num:>100`, not `views:>100`.
+
+### Explaining Matches
+
+```python
+from boolean_query_parser import parse_query, explain_query
+
+text = "python with flask and 150 users"
+explanation = explain_query(parse_query("python NOT java (flask OR num:>100)"), text)
+
+print(explanation.matched)            # True
+print(explanation.highlight(text))    # [python] with [flask] and [150] users
+print(explanation)
+# ✓ AND
+#   ✓ Text('python')  at 0-6
+#   ✓ NOT
+#     ✗ Text('java')
+#   ✓ OR
+#     ✓ Text('flask')  at 12-17
+#     ✓ Comparison(num:>100)  at 22-25
+```
+
+`explanation.hits()` lists the `Hit(field, start, end)` positions that made the query match; terms under `NOT` never count. On records, each hit names its field (`None` for unscoped terms).
+
+### Queries from Untrusted Users
+
+A regular expression can be written to take exponential time on some inputs. When the query comes from someone you do not trust, disable regexes; every other feature keeps working, and wildcards are matched without backtracking, so they stay fast on any input:
+
+```python
+from boolean_query_parser import QuerySyntaxError, parse_query
+
+try:
+    parse_query("error /(a+)+$/", allow_regex=False)
+except QuerySyntaxError as error:
+    print(error.position, error)  # 6 Error parsing query: Regular expressions are disabled ...
+```
+
+### Command Line
+
+Installing the package adds `bqp`, which prints the lines that match a query, like `grep`:
+
+```bash
+bqp 'ERROR AND (dur:>1s OR size:>10MB) NOT healthcheck' app.log
+bqp -i -n --color always 'timeout OR refused' *.log
+tail -f app.log | bqp 'num:>=500'
+bqp --json 'level:error AND ms:num:>500' app.jsonl   # one JSON object per line
+bqp --explain 'error NOT healthcheck' app.log         # show why each line matched
+```
+
+Options: `-i` ignore case, `-w` whole words, `--no-regex`, `-v` invert, `-c` count, `-l` files with matches, `-n` line numbers, `-H`/`--no-filename`, `--json`, `--explain`, `--color auto|always|never`. The exit status is 0 when a line was selected, 1 when none was, 2 on errors. `python -m boolean_query_parser` works too.
+
 ### Complex Regex Patterns
 
 ```python
@@ -263,13 +371,15 @@ print(apply_query(password_query, "Password123"))  # True
 
 ## API Documentation
 
-### `parse_query(query_str: str, *, ignore_case: bool = False) -> Node`
+### `parse_query(query_str, *, ignore_case=False, whole_words=False, allow_regex=True) -> Node`
 
 Parses a boolean query string into an abstract syntax tree (AST).
 
 **Parameters:**
 - `query_str` (str): The boolean query string to parse.
-- `ignore_case` (bool): Match every term regardless of case. Defaults to `False`.
+- `ignore_case` (bool): Match every term regardless of case.
+- `whole_words` (bool): Match text terms and phrases only as whole words.
+- `allow_regex` (bool): When `False`, `/regex/` terms are a syntax error.
 
 **Returns:**
 - `Node`: The root node of the parsed AST. Parse once and reuse it: the tree compiles itself on first use.
@@ -284,27 +394,34 @@ Parses a boolean query string into an abstract syntax tree (AST).
 - Terms can be wrapped in quotes for exact matching: `"exact phrase"`
 - Regular expressions can be specified with forward slashes: `/pattern/`
 - Regular expressions can include flags: `/pattern/i` (i=case-insensitive, m=multiline, s=dotall, x=verbose). Any other flag, such as JavaScript's `g`, is a syntax error.
-- Comparisons: `num:>value` and `date:>value` (operators: `>`, `<`, `>=`, `<=`, `=`)
+- Wildcards: `*` inside a bare word matches any run of word characters (`pyth*`, `*thon`, `py*n`)
+- Fields: `name:term` scopes a term (or a parenthesized group) to one field of a record; dotted names reach nested mappings
+- Comparisons: `num:>value`, `date:>value`, `dur:>value` and `size:>value` (operators: `>`, `<`, `>=`, `<=`, `=`)
   - `num:` scans text for numbers (integers, floats, negatives) and compares each against the threshold
   - `date:` scans text for date patterns (`YYYY-MM-DD`, `YYYY/MM/DD`, with an optional `THH:MM[:SS]` or ` HH:MM[:SS]` time) and compares at the precision of the threshold
   - Values can be quoted: `date:>"2023-01-01 10:00"`
-- Positional templates: `"literal text {num:<50} more text"` — quoted strings with `{num:op value}` or `{date:op value}` placeholders. Literal text must match in order, and comparisons apply only at the placeholder position.
+- Positional templates: `"literal text {num:<50} more text"` — quoted strings with `{num:op value}`, `{date:op value}`, `{dur:op value}` or `{size:op value}` placeholders. Literal text must match in order, and comparisons apply only at the placeholder position.
 - Parentheses can be used for grouping expressions, up to 100 levels deep
 
-### `apply_query(parsed_query: Node, text_data: Union[str, Iterable[str]]) -> Union[bool, List[str]]`
+### `apply_query(parsed_query, text_data) -> bool | list`
 
-Applies a parsed query to one text, or filters many.
+Applies a parsed query to one text or record, or filters many.
 
 **Parameters:**
 - `parsed_query` (Node): The parsed query AST from `parse_query`.
-- `text_data`: A single string to evaluate, or any iterable of strings (list, tuple, generator, ...) to filter.
+- `text_data`: A string or a mapping to evaluate, or any iterable of strings, or of mappings, to filter.
 
 **Returns:**
-- If `text_data` is a `str`: `bool` — True if the text matches the query, False otherwise.
-- Otherwise: `List[str]` — the strings that match, in their original order.
+- For a single string or mapping: `bool`.
+- Otherwise: a `list` of the items that match, in their original order.
 
 **Raises:**
-- `TypeError`: if `text_data` is neither a string nor an iterable of strings (mappings and bytes are rejected).
+- `TypeError`: if `text_data` is none of the above, mixes strings and mappings, or is `bytes`.
+- `QueryError`: if a query with `field:` terms is applied to plain strings.
+
+### `explain_query(parsed_query, data) -> Explanation`
+
+Explains why a string or a mapping does or does not match. The `Explanation` has `matched`, `hits()`, `highlight(text, before="[", after="]")`, and renders as a tree with `str()`.
 
 ## Real-World Use Cases
 
@@ -409,16 +526,20 @@ def filter_suspicious_emails(emails):
 
 ```
 boolean_query_parser/
-├── api.py          parse_query / apply_query, thin wrappers over the services
-├── services/       ParsingService (text → tree) and MatchingService (tree × texts → result)
+├── api.py          parse_query / apply_query / explain_query, thin wrappers over the services
+├── services/       ParsingService, MatchingService (texts and records), ExplanationService
 ├── syntax/         tokens, Lexer and the recursive descent Parser
-├── nodes/          the tree: Text, Regex, Comparison, Template, And/Or/Not
-├── values/         value kinds (num, date), their scanners and comparison operators
+├── nodes/          the tree: Text, Regex, Comparison, Template, Field, And/Or/Not
+├── values/         value kinds (num, date, dur, size), their scanners and comparison operators
+├── options.py      QueryOptions
+├── records.py      how a mapping is read: field lookup and full text
+├── explanation.py  Explanation and Hit
+├── cli/            the bqp command
 ├── exceptions.py   QueryError, QuerySyntaxError
 └── parser.py       the 1.0 import path, kept for compatibility
 ```
 
-Adding a new comparable kind (say, durations) means adding a `ValueKind` in `values/kinds.py`: comparisons and templates pick it up from the registry.
+Adding a new comparable kind means adding a `ValueKind` to the registry in `values/kinds.py`: comparisons and templates pick it up from there.
 
 ## Development
 
